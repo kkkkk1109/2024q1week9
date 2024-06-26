@@ -109,7 +109,7 @@ work_t *take(deque_t *q)
     work_t *x;
     if (t <= b) {
         /* Non-empty queue */
-        x = atomic_load_explicit(&a->buffer[b % a->size], memory_order_relaxed);
+        x = (work_t *) atomic_load_explicit(&a->buffer[b % a->size], memory_order_relaxed);
         if (t == b) {
             /* Single last element in queue */
             if (!atomic_compare_exchange_strong_explicit(&q->top, &t, t+1,
@@ -135,9 +135,9 @@ void push(deque_t *q, work_t *w)
         resize(q);
         a = atomic_load_explicit(&q->array, memory_order_relaxed);
     }
-    atomic_store_explicit(&a->buffer[b % a->size], w, memory_order_relaxed);
+    atomic_store_explicit(&a->buffer[b % a->size], (_Atomic work_t*)w, memory_order_relaxed);
     atomic_thread_fence(memory_order_release);
-    atomic_store_explicit(&q->bottom, b-1, memory_order_relaxed);
+    atomic_store_explicit(&q->bottom, b+1, memory_order_relaxed);
 }
 
 work_t *steal(deque_t *q)
@@ -149,7 +149,7 @@ work_t *steal(deque_t *q)
     if (t < b) {
         /* Non-empty queue */
         array_t *a = atomic_load_explicit(&q->array, memory_order_consume);
-        x = atomic_load_explicit(&a->buffer[t % a->size], memory_order_relaxed);
+        x = (work_t*)atomic_load_explicit(&a->buffer[t % a->size], memory_order_relaxed);
         if (!atomic_compare_exchange_strong_explicit(
                 &q->top, &t, t+1, memory_order_seq_cst, memory_order_relaxed))
             /* Failed race */
@@ -158,7 +158,7 @@ work_t *steal(deque_t *q)
     return x;
 }
 
-#define N_THREADS 24
+#define N_THREADS 4
 deque_t *thread_queues;
 
 atomic_bool done;
@@ -268,6 +268,7 @@ int main(int argc, char **argv)
     done_work->code = &done_task;
     done_work->join_count = N_THREADS * nprints;
 
+    printf("done define\r\n");
     for (int i = 0; i < N_THREADS; ++i) {
         tids[i] = i;
         init(&thread_queues[i], 8);
@@ -282,20 +283,21 @@ int main(int argc, char **argv)
             push(&thread_queues[i], work);
         }
     }
-
+    printf("done work queue \r\n");
     for (int i = 0; i < N_THREADS; ++i) {
         if (pthread_create(&threads[i], NULL, thread, &tids[i]) != 0) {
             perror("Failed to start the thread");
             exit(EXIT_FAILURE);
         }
     }
-
+    printf("done create thread\r\n");
     for (int i = 0; i < N_THREADS; ++i) {
         if (pthread_join(threads[i], NULL) != 0) {
             perror("Failed to join the thread");
             exit(EXIT_FAILURE);
         }
     }
+    printf("done join thread\r\n");
     printf("Expect %d lines of output (including this one)\n",
            2 * N_THREADS * nprints + N_THREADS + 2);
 
